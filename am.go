@@ -1,13 +1,12 @@
 package amrest
 
 import (
-	"fmt"
-	"strings"
-	"net/http"
-	"io/ioutil"
 	"bytes"
-	"errors"
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"strings"
 )
 
 type User struct {
@@ -15,14 +14,24 @@ type User struct {
 	Password string
 }
 
+func (u User) String() string {
+	return fmt.Sprintf("{u: %s, p: %s}", u.Username, u.Password)
+}
+
 type Actions map[string]bool
+
+type statusResponseError int
+
+func (e statusResponseError) Error() string {
+	return fmt.Sprintf("received status code %d", e)
+}
 
 // OAuth2IDTokenInfo requests information about the OAuth2 token
 func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string) (info []byte, err error) {
-	url := fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", baseURL, realm)
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", baseURL, realm),
+		strings.NewReader(fmt.Sprintf("id_token=%s", idToken)))
 
-	reqBody := strings.NewReader(fmt.Sprintf("id_token=%s", idToken))
-	req, err := http.NewRequest(http.MethodPost, url, reqBody)
 	if err != nil {
 		return info, err
 	}
@@ -35,12 +44,11 @@ func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string) (info [
 	if err != nil {
 		return info, err
 	}
-	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
-		return info, errors.New(fmt.Sprintf("Status %s", resp.Status))
+		return info, statusResponseError(resp.StatusCode)
 	}
 
+	defer resp.Body.Close()
 	resBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return info, err
@@ -50,9 +58,10 @@ func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string) (info [
 
 // Authenticate sends a request to authenticate the User
 func Authenticate(baseURL, realm string, user User) (string, error) {
-	url := fmt.Sprintf("%s/json/realms/root/realms/%s/authenticate", baseURL, realm)
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/json/realms/root/realms/%s/authenticate", baseURL, realm),
+		nil)
 
-	req, err := http.NewRequest(http.MethodPost, url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -63,33 +72,31 @@ func Authenticate(baseURL, realm string, user User) (string, error) {
 	req.Header.Add("X-OpenAM-Password", user.Password)
 	req.Header.Add("cache-control", "no-cache")
 
-	res, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", statusResponseError(resp.StatusCode)
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	if res.StatusCode != http.StatusOK {
-		return "", errors.New(fmt.Sprintf("Status %s", res.Status))
-	}
-
-	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return "", err
-	}
-
-	response := struct {
+	info := struct {
 		TokenID string `json:"tokenId"`
 	}{}
-	if err := json.Unmarshal(body, &response); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return "", err
 	}
-	return response.TokenID, nil
+	return info.TokenID, nil
 }
 
 // PoliciesEvaluate evaluates the given resources
-func PoliciesEvaluate(baseURL, realm, app string, idTokenInfo json.RawMessage, SSOToken string, recources []string) (Actions, error) {
-	url := fmt.Sprintf("%s/json/policies?_action=evaluate&realm=%s", baseURL, realm)
+func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenInfo json.RawMessage, recources []string) (Actions, error) {
 	type subject struct {
 		Claims json.RawMessage `json:"claims"`
 	}
@@ -107,34 +114,41 @@ func PoliciesEvaluate(baseURL, realm, app string, idTokenInfo json.RawMessage, S
 		return nil, err
 	}
 
-	payload := bytes.NewReader(b)
-	req, _ := http.NewRequest(http.MethodPost, url, payload)
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/json/policies?_action=evaluate&realm=%s", baseURL, realm),
+		bytes.NewReader(b))
+
+	if err != nil {
+		return nil, err
+	}
 
 	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Cookie", fmt.Sprintf("iPlanetDirectoryPro=%s", SSOToken))
+	req.Header.Add("Cookie", fmt.Sprintf("%s=%s", cookieName, ssoToken))
 	req.Header.Add("cache-control", "no-cache")
 
-	res, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusResponseError(resp.StatusCode)
+	}
+
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	defer res.Body.Close()
-	body, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var response []struct {
+	var evaluation []struct {
 		Actions Actions
 	}
 
-	if err := json.Unmarshal(body, &response); err != nil {
+	if err := json.Unmarshal(body, &evaluation); err != nil {
 		return nil, err
 	}
-	if len(response) != 1 {
-		return nil, fmt.Errorf("expected only one resource; got %d", len(response))
+	if len(evaluation) != 1 {
+		return nil, fmt.Errorf("expected only one resource; got %d", len(evaluation))
 	}
-	return response[0].Actions, nil
-
+	return evaluation[0].Actions, nil
 }
