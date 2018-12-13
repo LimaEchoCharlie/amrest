@@ -18,7 +18,26 @@ func (u User) String() string {
 	return fmt.Sprintf("{u: %s, p: %s}", u.Username, u.Password)
 }
 
+type Printfer interface {
+	Printf(format string, v ...interface{})
+}
+type nullPrintfer struct{}
+
+func (nullPrintfer) Printf(string, ...interface{}) {
+	return
+}
+var NullPrintfer = &nullPrintfer{}
+
 type Actions map[string]bool
+
+func (a Actions) String() string {
+	s := "{ "
+	for k, v := range a {
+		s += fmt.Sprintf(" %s:%t, ", k, v)
+	}
+	s += "}"
+	return s
+}
 
 type statusResponseError int
 
@@ -27,7 +46,7 @@ func (e statusResponseError) Error() string {
 }
 
 // OAuth2IDTokenInfo requests information about the OAuth2 token
-func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string) (info []byte, err error) {
+func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string, logger Printfer) (info []byte, err error) {
 	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", baseURL, realm),
 		strings.NewReader(fmt.Sprintf("id_token=%s", idToken)))
@@ -44,20 +63,23 @@ func OAuth2IDTokenInfo(baseURL, realm string, user User, idToken string) (info [
 	if err != nil {
 		return info, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return info, statusResponseError(resp.StatusCode)
-	}
 
 	defer resp.Body.Close()
-	resBody, err := ioutil.ReadAll(resp.Body)
+	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return info, err
 	}
-	return resBody, nil
+
+	if resp.StatusCode != http.StatusOK {
+		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
+		return info, statusResponseError(resp.StatusCode)
+	}
+
+	return body, nil
 }
 
 // Authenticate sends a request to authenticate the User
-func Authenticate(baseURL, realm string, user User) (string, error) {
+func Authenticate(baseURL, realm string, user User, logger Printfer) (string, error) {
 	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/json/realms/root/realms/%s/authenticate", baseURL, realm),
 		nil)
@@ -76,14 +98,16 @@ func Authenticate(baseURL, realm string, user User) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", statusResponseError(resp.StatusCode)
-	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
+		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
 		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", statusResponseError(resp.StatusCode)
 	}
 
 	info := struct {
@@ -96,7 +120,7 @@ func Authenticate(baseURL, realm string, user User) (string, error) {
 }
 
 // PoliciesEvaluate evaluates the given resources
-func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenInfo json.RawMessage, recources []string) (Actions, error) {
+func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenInfo []byte, recources []string, logger Printfer) (Actions, error) {
 	type subject struct {
 		Claims json.RawMessage `json:"claims"`
 	}
@@ -109,7 +133,8 @@ func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenI
 		Application: app,
 		Subject:     subject{Claims: idTokenInfo},
 	}
-	b, err := json.Marshal(payloadData)
+	// The value passed to json.Marshal must be a pointer for json.RawMessage to work properly
+	b, err := json.Marshal(&payloadData)
 	if err != nil {
 		return nil, err
 	}
@@ -130,14 +155,16 @@ func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenI
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, statusResponseError(resp.StatusCode)
-	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
+		return nil, statusResponseError(resp.StatusCode)
 	}
 
 	var evaluation []struct {
