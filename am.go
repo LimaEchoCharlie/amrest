@@ -150,6 +150,7 @@ func PoliciesEvaluate(baseURL, realm, app, cookieName, ssoToken string, idTokenI
 	req.Header.Add("Content-Type", "application/json")
 	req.Header.Add("Cookie", fmt.Sprintf("%s=%s", cookieName, ssoToken))
 	req.Header.Add("cache-control", "no-cache")
+	req.Header.Add("Accept-API-Version", "resource=2.0, protocol=1.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
