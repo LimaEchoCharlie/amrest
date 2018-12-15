@@ -38,17 +38,6 @@ func (nullPrintfer) Printf(string, ...interface{}) {
 // NullPrintfer is a no-op Printfer
 var NullPrintfer = &nullPrintfer{}
 
-type Actions map[string]bool
-
-func (a Actions) String() string {
-	s := "{ "
-	for k, v := range a {
-		s += fmt.Sprintf(" %s:%t, ", k, v)
-	}
-	s += "}"
-	return s
-}
-
 // StatusCodeError indicate that an unexpected status code has been returned by the server
 type StatusCodeError int
 
@@ -85,8 +74,12 @@ func OAuth2IDTokenInfo(client Doer, baseURL, realm string, user User, idToken st
 		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
 		return info, StatusCodeError(resp.StatusCode)
 	}
-
 	return body, nil
+}
+
+// AuthenticateResponse is the response to a Authenticate request
+type AuthenticateResponse struct {
+	TokenID string `json:"tokenId"`
 }
 
 // Authenticate sends a request to authenticate the User
@@ -120,26 +113,53 @@ func Authenticate(client Doer, baseURL, realm string, user User, logger Printfer
 	if resp.StatusCode != http.StatusOK {
 		return body, StatusCodeError(resp.StatusCode)
 	}
-
 	return body, nil
 }
 
+// Policies describes an action
+type Policies struct {
+	Resources   []string `json:"resources"`
+	Application string   `json:"application"`
+	Subject     struct {
+		Claims json.RawMessage `json:"claims,omitempty"`
+	} `json:"subject"`
+}
+
+// NewPolicies creates a new set of policies
+// An additional method call will be needed to add subject(s) to the Policies
+func NewPolicies(resources []string, application string) *Policies {
+	return &Policies{Resources: resources, Application: application}
+}
+
+// AddClaims adds JWT claims to the Policies
+func (p *Policies) AddClaims(c []byte) *Policies {
+	p.Subject.Claims = c
+	return p
+}
+
+// A map of action names to bool values that indicate whether the action is allowed or denied for the specified
+// resource
+type actions map[string]bool
+
+func (a actions) String() string {
+	s := "{ "
+	for k, v := range a {
+		s += fmt.Sprintf(" %s:%t,", k, v)
+	}
+	s += "}"
+	return s
+}
+
+// PolicyEvaluation is a policy evaluation response for a single resource
+type PolicyEvaluation struct {
+	Resource string  `json:"resource"`
+	Actions  actions `json:"actions"`
+}
+
 // PoliciesEvaluate evaluates the given resources
-func PoliciesEvaluate(client Doer, baseURL, realm, app, cookieName, ssoToken string, idTokenInfo []byte, recources []string, logger Printfer) ([]byte, error) {
-	type subject struct {
-		Claims json.RawMessage `json:"claims"`
-	}
-	payloadData := struct {
-		Resources   []string `json:"resources"`
-		Application string   `json:"application"`
-		Subject     subject  `json:"subject"`
-	}{
-		Resources:   recources,
-		Application: app,
-		Subject:     subject{Claims: idTokenInfo},
-	}
+func PoliciesEvaluate(client Doer, baseURL, realm, cookieName, ssoToken string, policies *Policies, logger Printfer) ([]byte, error) {
 	// The value passed to json.Marshal must be a pointer for json.RawMessage to work properly
-	b, err := json.Marshal(&payloadData)
+	b, err := json.Marshal(policies)
 	if err != nil {
 		return nil, err
 	}
