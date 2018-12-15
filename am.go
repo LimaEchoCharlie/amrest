@@ -92,7 +92,7 @@ func OAuth2IDTokenInfo(client Doer, baseURL, realm string, user User, idToken st
 // Authenticate sends a request to authenticate the User
 func Authenticate(client Doer, baseURL, realm string, user User, logger Printfer) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/json/realms/root/realms/%s/authenticate", baseURL, realm),
+		fmt.Sprintf("%s/json/authenticate?realm=%s", baseURL, realm),
 		nil)
 
 	if err != nil {
