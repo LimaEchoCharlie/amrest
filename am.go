@@ -24,20 +24,6 @@ type Doer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Printfer is an interface that represents a logger, enabling the caller to control where debug information is sent
-type Printfer interface {
-	Printf(format string, v ...interface{})
-}
-
-type nullPrintfer struct{}
-
-func (nullPrintfer) Printf(string, ...interface{}) {
-	return
-}
-
-// NullPrintfer is a no-op Printfer
-var NullPrintfer = &nullPrintfer{}
-
 // StatusCodeError indicate that an unexpected status code has been returned by the server
 type StatusCodeError int
 
@@ -46,13 +32,13 @@ func (e StatusCodeError) Error() string {
 }
 
 // OAuth2IDTokenInfo requests information about the OAuth2 token
-func OAuth2IDTokenInfo(client Doer, baseURL, realm string, user User, idToken string, logger Printfer) (info []byte, err error) {
+func OAuth2IDTokenInfo(client Doer, baseURL, realm string, user User, idToken string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", baseURL, realm),
 		strings.NewReader(fmt.Sprintf("id_token=%s", idToken)))
 
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 
 	req.SetBasicAuth(user.Username, user.Password)
@@ -61,18 +47,17 @@ func OAuth2IDTokenInfo(client Doer, baseURL, realm string, user User, idToken st
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return info, err
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
-		return info, StatusCodeError(resp.StatusCode)
+		return body, StatusCodeError(resp.StatusCode)
 	}
 	return body, nil
 }
@@ -83,7 +68,7 @@ type AuthenticateResponse struct {
 }
 
 // Authenticate sends a request to authenticate the User
-func Authenticate(client Doer, baseURL, realm string, user User, logger Printfer) ([]byte, error) {
+func Authenticate(client Doer, baseURL, realm string, user User) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("%s/json/authenticate?realm=%s", baseURL, realm),
 		nil)
@@ -106,7 +91,6 @@ func Authenticate(client Doer, baseURL, realm string, user User, logger Printfer
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
 		return body, err
 	}
 
@@ -157,7 +141,7 @@ type PolicyEvaluation struct {
 }
 
 // PoliciesEvaluate evaluates the given resources
-func PoliciesEvaluate(client Doer, baseURL, realm, cookieName, ssoToken string, policies *Policies, logger Printfer) ([]byte, error) {
+func PoliciesEvaluate(client Doer, baseURL, realm, cookieName, ssoToken string, policies *Policies) ([]byte, error) {
 	// The value passed to json.Marshal must be a pointer for json.RawMessage to work properly
 	b, err := json.Marshal(policies)
 	if err != nil {
@@ -189,7 +173,6 @@ func PoliciesEvaluate(client Doer, baseURL, realm, cookieName, ssoToken string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Printf("status %d, body: %s", resp.StatusCode, string(body))
 		return body, StatusCodeError(resp.StatusCode)
 	}
 	return body, nil
