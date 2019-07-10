@@ -8,6 +8,69 @@ import (
 	"strings"
 )
 
+// OAuth2Client represents an AM OAuth2 client
+type OAuth2Client struct {
+	baseURL string
+	realm   string
+	id      string
+	secret  string
+}
+
+// NewOAuth2ClientWithSecret creates a new OAuth2 client that uses the supplied secret to authenticate itself
+func NewOAuth2ClientWithSecret(baseURL, realm, id, secret string) OAuth2Client {
+	return OAuth2Client{baseURL: baseURL, realm: realm, id: id, secret: secret}
+}
+
+// Introspect creates a request to introspect the given OAuth2 token
+func (o OAuth2Client) Introspect(token string) (*http.Request, error) {
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/oauth2/realms/root/realms%s/introspect", o.baseURL, o.realm),
+		strings.NewReader(fmt.Sprintf("token=%s", token)))
+
+	if err != nil {
+		return nil, err
+	}
+
+	req.SetBasicAuth(o.id, o.secret)
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return req, nil
+}
+
+// IDTokenInfo creates a request to request information about the OAuth2 id token
+func (o OAuth2Client) IDTokenInfo(idToken string) (*http.Request, error) {
+	req, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", o.baseURL, o.realm),
+		strings.NewReader(fmt.Sprintf("id_token=%s", idToken)))
+
+	if err != nil {
+		return nil, err
+	}
+
+	req.SetBasicAuth(o.id, o.secret)
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	return req, nil
+}
+
+// IntrospectionResponse contains the data returned by the server to an introspection request
+type IntrospectionResponse struct {
+	Active    bool   `json:"active"`
+	Scope     string `json:"scope"`
+	ClientID  string `json:"client_id"`
+	Username  string `json:"username"`
+	TokenType string `json:"token_type"`
+	Exp       int64  `json:"exp"`
+	Iat       int64  `json:"iat"`
+	Nbf       int64  `json:"nbf"`
+	Sub       string `json:"sub"`
+	Aud       string `json:"aud"`
+	Iss       string `json:"iss"`
+	Jti       string `json:"jti"`
+}
+
 // User contains information needed for the basic authorisation of a request
 type User struct {
 	Username string
@@ -16,23 +79,6 @@ type User struct {
 
 func (u User) String() string {
 	return fmt.Sprintf("{u: %s, p: %s}", u.Username, u.Password)
-}
-
-// OAuth2IDTokenInfoRequest creates a request to get information about the OAuth2 token
-func OAuth2IDTokenInfoRequest(baseURL, realm string, user User, idToken string) (*http.Request, error) {
-	req, err := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("%s/oauth2/idtokeninfo?realm=%s", baseURL, realm),
-		strings.NewReader(fmt.Sprintf("id_token=%s", idToken)))
-
-	if err != nil {
-		return nil, err
-	}
-
-	req.SetBasicAuth(user.Username, user.Password)
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	return req, nil
 }
 
 // AuthenticateResponse is the response to a Authenticate request
